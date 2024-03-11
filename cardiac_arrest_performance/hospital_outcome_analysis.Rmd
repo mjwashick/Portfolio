@@ -1,0 +1,663 @@
+---
+title: "D.C. Resuscitation Collaborative"
+subtitle: "Hospital Outcome Report"
+author: 'D.C. Fire and EMS: Office of the Medical Director'
+date: '`r format(Sys.Date(), "%B %d, %Y")`'
+output:
+  html_document:
+    df_print: paged
+---
+
+
+<style type="text/css">
+
+h1.title {
+  font-size: 38px;
+  font-family: "Times New Roman", Times, serif;
+  font-weight: bold;
+  color: Black;
+  text-align: center;
+}
+h3.subtitle {
+  font-size: 28px;
+  font-family: "Times New Roman", Times, serif;
+  font-weight: bold;
+  color: Black;
+  text-align: center;
+}
+h4.author { /* Header 4 - and the author and data headers use this too  */
+    font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkBlue;
+  text-align: center;
+}
+h4.date { /* Header 4 - and the author and data headers use this too  */
+  font-size: 18px;
+  font-family: "Times New Roman", Times, serif;
+  color: DarkBlue;
+  text-align: center;
+}
+body {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 18px;
+}
+h1,h2,h3,h4,h5{
+  font-family: "Times New Roman", Times, serif;
+}
+p + p { 
+  text-indent: 50px;
+  margin-bottom: 0;
+  padding-bottom: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# libraries
+
+# Libraries
+library(readxl)
+library(ggthemes)
+library(janitor)
+library(splitstackshape)
+library(lubridate)
+library(scales)
+library(tidyverse)
+
+```
+
+```{r data import and cleaning, include=FALSE}
+
+# IMPORT
+df <- read_csv("P:/Analysis_R/Data/cardiac arrest/cares/cares_2016_2021_01.csv",trim_ws = T)
+
+# CLEANING
+
+df_clean <- 
+  df %>% 
+  select(-c(
+    `Booklet #`,
+    `EMS Response #`,
+    `First Name`,
+    `Last Name`,
+    `General Comments`,
+    `Hospital Comments`,
+  )) %>%
+  mutate_if(is.character, toupper) %>% 
+  mutate_all(na_if, "") %>% 
+  clean_names() %>% 
+  filter(age_modifier == "YEARS",
+         presumed_cardiac_arrest_etiology %in% c("PRESUMED CARDIAC ETIOLOGY",
+                                                 "RESPIRATORY/ASPHYXIA",
+                                                 "DRUG OVERDOSE")) %>%  # Cardiac etiology only
+  filter(age >= 18,                                                     # Patients 18 years of age and older
+         #race_ethnicity != "UNKNOWN"
+) %>%                                                 
+  mutate_at(.vars = vars(date_of_arrest),
+            .funs = mdy) %>% 
+  mutate_at(.vars = vars(age),
+            .funs = as.numeric) %>% 
+  mutate(discharge_status = case_when(
+    is.na(discharge_from_the_hospital) ~ "NO",                     # Discharged from the hospital: Y/N
+    TRUE ~ "YES"),
+    
+         rosc_any         = case_when(
+           str_detect(sustained_rosc, "YES") ~ "YES",              # Any ROSC, sustained or not: Y/N
+           TRUE ~ "NO"),
+    
+         shock_status     = case_when(
+           first_monitored_rhythm %in% c("ASYSTOLE",
+                                         "UNKNOWN UNSHOCKABLE RHYTHM",
+                                         "IDIOVENTRICULAR/PEA") ~ "NONSHOCK", 
+                                      TRUE ~ "SHOCK"),             # Initial Rhythm is shockable: Y/N
+    
+         aed_applied      = case_when(
+           str_detect(who_first_applied_the_aed, "E") ~ "APPLIED", # All values contain an "E"
+                                      TRUE ~ "NOT APPLIED"),
+    
+         wit_status       = case_when(
+           str_detect(arrest_witness_status, "UNWITNESSED") ~ "UNWITNESSED",
+                                      TRUE ~ "WITNESSED"),         # Was the arrest witnessed by anyone: Y/N
+    
+         bystander_cpr    = case_when(
+           initiated_cpr   == "FAMILY MEMBER" |
+             initiated_cpr == "BYSTANDER" ~ "BYSTANDER",
+           TRUE ~ "NOT BYSTANDER"),                                # Family or Bystander initiated CPR: Y/N
+    
+         surv_bundle      = case_when(
+           wit_status == "WITNESSED" & 
+             bystander_cpr == "BYSTANDER" & 
+             aed_applied == "APPLIED" ~ "YES",
+           TRUE ~ "NO"),                                           # Survival bundle of witnessed+CPR+AED: Y/N
+    
+         wit_cpr_bundle   = case_when(
+           wit_status == "WITNESSED" & 
+             bystander_cpr == "BYSTANDER" ~ "YES",
+           TRUE ~ "NO"),                                           # Bystander CPR+Witnessed: Y/N; uses on 'bystander_cpr' variable above
+    
+         neuro_outcome    = factor(
+           case_when(neurological_outcome       == "GOOD CEREBRAL PERFORMANCE"     ~ "1",
+                     neurological_outcome       == "MODERATE CEREBRAL DISABILITY"  ~ "2", 
+                     neurological_outcome       == "SEVERE CEREBRAL DISABILITY"    ~ "3",
+                     neurological_outcome       == "COMA, VEGETATIVE STATE"        ~ "4",
+                     TRUE ~ "NA"),
+           ordered = T),                                          # Cerebral Performance Category: 1-4
+    quarter_cy = quarter(date_of_arrest, with_year = T),
+    quarter_fy = quarter(date_of_arrest, with_year = T, fiscal_start = 10)) %>%                                       
+  select(-c(
+    incident_address, 
+    lost_to_follow_up))
+
+
+
+```
+
+```{r variables and functions, include=FALSE}
+
+# FUNCTIONS ----
+
+StatMedianLine <- ggproto("StatMedianLine", Stat,
+                          compute_group = function(data, scales) {
+                            transform(data, yintercept=median(y))
+                          },
+                          required_aes = c("x", "y")
+)
+
+stat_median_line <- function(mapping = NULL, data = NULL, geom = "hline",
+                             position = "identity", na.rm = FALSE, show.legend = NA, 
+                             inherit.aes = TRUE, ...) {
+  layer(
+    stat = StatMedianLine, data = data, mapping = mapping, geom = geom, 
+    position = position, show.legend = show.legend, inherit.aes = inherit.aes,
+    params = list(na.rm = na.rm, ...)
+  )
+}
+
+```
+
+# About
+
+The D.C. Resuscitation Collaborative, Cardiac Arrest Hospital Outcome Report is an analysis of patients, who suffered a cardiac arrest and were transported by D.C. Fire and EMS to one of three hospitals in the District of Columbia:<strong>Washington Hospital Center - MedStar</strong>, <strong>Howard University Hospital</strong>, <strong>George Washington University Hospital</strong>.
+
+Each hospital has specialty resources for cardiac emergencies that include the ability to perform PCI, or percutaneous coronary intervention to remove emboli or thrombus (a blockage) from coronary arteries to restore normal blood flow. Any blockage of the coronary arteries can lead to the irritation of heart muscle and in turn, result in abnormal electrical conduction which in turn leads to a sudden cardiac arrest event.
+
+Any patient that suffers a sudden cardiac arrest event in the District of Columbia should be transported to one of these hospitals, barring extenuating circumstances **[define those circumstances]**. Thus, this report provides both an aggregate overview of outcomes for patients who suffer a cardiac arrest event, and by individual hospital. Reporting on aggregate data provides an overview or '<strong>The System</strong>'.
+
+The System refers to the system of care outlined by the American Heart Association, better known as '*The Chain of Survival*'. Hospitals are part of the Advanced Resuscitation Care and Post-Event Recovery; two critical components to surviving a cardiac arrest event. This reports aims to provide a comprehensive analysis of the patients that are treated *and* transported to one of three PCI facilities in the District of Columbia.
+
+# Definitions:
+
+-   Witnessed Cardiac Arrest: any cardiac arrest that was observed either by a healthcare provider, family member, or bystander
+-   Bystander CPR: defined as a true bystander (non-healthcare provider) or family member
+-   AED: Automated External Defibrillator
+-   ROSC: Return of Spontaneous Circulation
+-   Survival: Measured as survival to hospital discharge, without regard for cerebral performance category.
+-   Shockable Rhythm: Defined as either pulseless Ventricular Tachycardia, Ventricular Fibrillation, or Unknown Shockable Rhythm (obtained by AED data)
+
+## Special Definitions:
+
+-   Utstein Criteria-1: Bystander witnessed cardiac arrest, with an initial presenting 'shockable' rhythm
+-   Utstein Criteria-2: Bystander witnessed cardiac arrest, with an initial presenting 'shockable' rhythm, and bystander CPR performed and/or applied an AED
+
+# Data:
+
+D.C. Fire and EMS uses the Cardiac Arrest Registry to Enhance Survival, also known as CARES, database to track and monitor all cardiac arrest resuscitations attempted by the Department. In the event a patient is transported to a hospital, each hospital is then responsible for entering outcome information into the registry.
+
+For this analysis, all 'non-traumatic' cardiac arrests are included in the data set, and include the following etiologies: - Presumed Cardiac Etiology - Drug overdose - Respiratory arrest/asphyxia
+
+The purpose of including all three etiologies is to alleviate issues with coding. It is unclear what the actual cause of a patients' cardiac arrest and heavily relies on the pre-hospital providers to make that determination.
+
+
+```{r overall survival, include=FALSE}
+p1 <-                       # This plots the total number of non-traumatic cardiac arrests treated by DC FEMS
+  ggplot(data = total,
+         aes(x = new_date,
+             y = n)) +
+  geom_point() +
+  geom_line() +
+  expand_limits(y = 0) +
+  scale_y_continuous(n.breaks = 7) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b, '%y") +
+  labs(title = "Total Number of Non-Traumatic Cardiac Arrests by Month",
+       x     = "Months") +
+  theme_tufte(base_size = 12) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+p2 <- 
+  
+
+```
+
+
+
+
+
+
+
+```{r standard utstein data, include=FALSE}
+  
+utstein_yr <- df_clean %>% 
+  filter(!location_type %in% c("NURSING HOME",
+                               "HEALTHCARE FACILITY")) %>% 
+  mutate(bstnd_aed = case_when(who_first_applied_the_aed %in% c("BYSTANDER", "FAMILY MEMBER") ~ "BYSTANDER",
+                               TRUE ~ "NOT BYSTANDER"),
+         bstnd_cpr = case_when(initiated_cpr %in% c("BYSTANDER", "FAMILY MEMBER") ~ "BYSTANDER",
+                               TRUE ~ "NOT BYSTANDER"),
+         bstnd_wit = case_when(arrest_witness_status == "WITNESSED BY BYSTANDER" ~ "BYSTANDER",
+                               TRUE ~ "NOT BYSTANDER")) %>% 
+  mutate(survive_to_dc = as.numeric(case_when(discharge_status == "YES" ~ "1",
+                                              TRUE ~ "0")),
+         utstein_1 = as.numeric(case_when(bstnd_wit == "BYSTANDER" & shock_status == "SHOCK" ~ "1",
+                               TRUE ~ "0")),
+         utstein_2 = as.numeric(case_when(bstnd_wit == "BYSTANDER" & 
+                                 shock_status == "SHOCK" &
+                                 (bstnd_cpr == "BYSTANDER" | bstnd_aed == "BYSTANDER") ~ "1",
+                               TRUE ~ "0")),
+         surv_ut_1 = as.numeric(case_when(utstein_1 == "1" & survive_to_dc == "1" ~ "1",
+                                          TRUE ~ "0")),
+         surv_ut_2 = as.numeric(case_when(utstein_2 == "1" & survive_to_dc == "1" ~ "1",
+                                          TRUE ~ "0"))) %>% 
+  group_by(yr = year(date_of_arrest),
+           destination_hospital) %>% 
+  summarise(n = n(),
+            surv   = sum(survive_to_dc),
+            surv_1 = sum(surv_ut_1),
+            surv_2 = sum(surv_ut_2),
+            n_ut_1 = sum(utstein_1),
+            n_ut_2 = sum(utstein_2),
+            prop_1 = surv_1/n_ut_1,
+            prop_2 = surv_2/n_ut_2) %>% 
+  filter(destination_hospital %in% c(
+    "WASHINGTON HOSPITAL CENTER - MEDSTAR",
+    "HOWARD UNIVERSITY HOSPITAL",
+    "GEORGE WASHINGTON UNIVERSITY HOSPITAL"
+  ))
+  
+df_clean %>% 
+  group_by(yr = year(date_of_arrest),
+           shock_status) %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = 'shock_status',
+              values_from = n, 
+              names_prefix = 'shockable_rhythm_') %>% 
+  mutate(prop_shockable = shockable_rhythm_SHOCK/(shockable_rhythm_SHOCK + shockable_rhythm_NONSHOCK))
+
+
+df_clean %>% 
+  group_by(yr = year(date_of_arrest),
+           rosc_any) %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = 'rosc_any',
+              values_from = 'n',
+              names_prefix = 'rosc_any_') %>% 
+  mutate(total = rosc_any_YES + rosc_any_NO,
+         rosc_prop = rosc_any_YES/total) 
+
+# Utstein 1 Counts
+p4.1 <- 
+ggplot(data = utstein_yr,
+       aes(x = yr,
+           y = n_ut_1,
+           color = destination_hospital)) +
+  geom_line() +
+  geom_point() +
+  expand_limits(y = 0) +
+  labs(title    = "Utstein-1 Survival by Destination Hospital",
+       subtitle = "Utstein-1: Bystander witnessed with initial shockable rhythm",
+       y     = "Survival Count",
+       x     = "Years",
+       color = NULL) +
+  guides(color = guide_legend(nrow = 2)) +
+  theme(plot.title      = element_text(hjust = .5),
+        plot.subtitle   = element_text(hjust = .5),
+        legend.position = 'bottom')
+
+# Utstein 1 Survival Counts
+p4.2 <- 
+ggplot(data = utstein_yr,
+       aes(x = yr,
+           y = surv_1,
+           color = destination_hospital)) +
+  geom_line() +
+  geom_point() +
+  expand_limits(y = 0) +
+  labs(title    = "Utstein-1 Survival by Destination Hospital",
+       subtitle = "Utstein-1: Bystander witnessed with initial shockable rhythm and bystander intervention",
+       y     = "Survival Count",
+       x     = "Years",
+       color = NULL) +
+  guides(color = guide_legend(nrow = 2)) +
+  theme(plot.title      = element_text(hjust = .5),
+        plot.subtitle   = element_text(hjust = .5),
+        legend.position = 'bottom')
+
+# Utstein Survival 1 Percent
+p4.3 <- 
+ggplot(data = utstein_yr,
+       aes(x = yr,
+           y = prop_1,
+           color = destination_hospital)) +
+  geom_line() +
+  geom_point() +
+  expand_limits(y = c(0,1)) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title    = "Utstein-1 Survival by Destination Hospital",
+       subtitle = "Utstein-1: Bystander witnessed with initial shockable rhythm and bystander intervention",
+       y     = "Survival Percentage",
+       x     = "Years",
+       color = NULL) +
+  guides(color = guide_legend(nrow = 2)) +
+  theme(plot.title      = element_text(hjust = .5),
+        plot.subtitle   = element_text(hjust = .5),
+        legend.position = 'bottom')
+
+
+
+
+
+
+# Utstein 2 Counts
+p5.1 <- 
+ggplot(data = utstein_yr,
+       aes(x = yr,
+           y = n_ut_2,
+           color = destination_hospital)) +
+  geom_line() +
+  geom_point() +
+  expand_limits(y = 0) +
+  labs(title    = "Utstein-2 Survival by Destination Hospital",
+       subtitle = "Utstein-2: Bystander witnessed with initial shockable rhythm and bystander intervention",
+       y     = "Survival Count",
+       x     = "Years",
+       color = NULL) +
+  guides(color = guide_legend(nrow = 2)) +
+  theme(plot.title      = element_text(hjust = .5),
+        plot.subtitle   = element_text(hjust = .5),
+        legend.position = 'bottom')
+
+# Utstein 2 Survival Counts
+p5.2 <- 
+ggplot(data = utstein_yr,
+       aes(x = yr,
+           y = surv_2,
+           color = destination_hospital)) +
+  geom_line() +
+  geom_point() +
+  expand_limits(y = 0) +
+  #scale_y_continuous(labels = percent_format()) +
+  labs(title    = "Utstein-2 Survival by Destination Hospital",
+       subtitle = "Utstein-2: Bystander witnessed with initial shockable rhythm and bystander intervention",
+       y     = "Survival Count",
+       x     = "Years",
+       color = NULL) +
+  guides(color = guide_legend(nrow = 2)) +
+  theme(plot.title      = element_text(hjust = .5),
+        plot.subtitle   = element_text(hjust = .5),
+        legend.position = 'bottom')
+
+# Utstein Survival 2 Percent
+p5.3 <- 
+ggplot(data = utstein_yr,
+       aes(x = yr,
+           y = prop_2,
+           color = destination_hospital)) +
+  geom_line() +
+  geom_point() +
+  expand_limits(y = 1) +
+  scale_y_continuous(labels = percent_format()) +
+  labs(title    = "Utstein-2 Survival by Destination Hospital",
+       subtitle = "Utstein-2: Bystander witnessed with initial shockable rhythm and bystander intervention",
+       y     = "Survival Percentage",
+       x     = "Years",
+       color = NULL) +
+  guides(color = guide_legend(nrow = 2)) +
+  theme(plot.title      = element_text(hjust = .5),
+        plot.subtitle   = element_text(hjust = .5),
+        legend.position = 'bottom')
+
+
+
+# Quarter Data
+  
+utstein_qtr <- df_clean %>% 
+  filter(!location_type %in% c("NURSING HOME",
+                               "HEALTHCARE FACILITY")) %>% 
+  mutate(bstnd_aed = case_when(who_first_applied_the_aed %in% c("BYSTANDER", "FAMILY MEMBER") ~ "BYSTANDER",
+                               TRUE ~ "NOT BYSTANDER"),
+         bstnd_cpr = case_when(initiated_cpr %in% c("BYSTANDER", "FAMILY MEMBER") ~ "BYSTANDER",
+                               TRUE ~ "NOT BYSTANDER"),
+         bstnd_wit = case_when(arrest_witness_status == "WITNESSED BY BYSTANDER" ~ "BYSTANDER",
+                               TRUE ~ "NOT BYSTANDER")) %>% 
+  mutate(survive_to_dc = as.numeric(case_when(discharge_status == "YES" ~ "1",
+                                              TRUE ~ "0")),
+         utstein_1 = as.numeric(case_when(bstnd_wit == "BYSTANDER" & shock_status == "SHOCK" ~ "1",
+                               TRUE ~ "0")),
+         utstein_2 = as.numeric(case_when(bstnd_wit == "BYSTANDER" & 
+                                 shock_status == "SHOCK" &
+                                 (bstnd_cpr == "BYSTANDER" | bstnd_aed == "BYSTANDER") ~ "1",
+                               TRUE ~ "0")),
+         surv_ut_1 = as.numeric(case_when(utstein_1 == "1" & survive_to_dc == "1" ~ "1",
+                                          TRUE ~ "0")),
+         surv_ut_2 = as.numeric(case_when(utstein_2 == "1" & survive_to_dc == "1" ~ "1",
+                                          TRUE ~ "0"))) %>% 
+  group_by(quarter_cy,
+           destination_hospital) %>% 
+  summarise(n = n(),
+            surv   = sum(survive_to_dc),
+            surv_1 = sum(surv_ut_1),
+            surv_2 = sum(surv_ut_2),
+            n_ut_1 = sum(utstein_1),
+            n_ut_2 = sum(utstein_2),
+            prop   = surv/n,
+            prop_1 = surv_1/n_ut_1,
+            prop_2 = surv_2/n_ut_2) %>% 
+  filter(
+    destination_hospital %in% c(
+    "WASHINGTON HOSPITAL CENTER - MEDSTAR",
+    "HOWARD UNIVERSITY HOSPITAL",
+    "GEORGE WASHINGTON UNIVERSITY HOSPITAL"),
+    quarter_cy >= 2020.1)
+
+p6.1 <- 
+ggplot(data = utstein_qtr,
+       aes(x = as.character(quarter_cy),
+           y = prop,
+           color = destination_hospital,
+           group = destination_hospital)) +
+  geom_point() +
+  geom_path() +
+  guides(color = guide_legend(nrow = 2)) +
+  theme(plot.title      = element_text(hjust = .5),
+        plot.subtitle   = element_text(hjust = .5),
+        legend.position = 'bottom')
+
+  
+```
+
+```{r hospital graphs}
+
+p4.1
+p4.2
+p4.3
+p5.1
+p5.2
+p5.3
+p6.1
+
+```
+
+```{r shockable vs nonshockable, include=FALSE}
+
+```
+
+```{r rosc vs no rosc, include=FALSE}
+
+```
+
+
+# Survival Analysis
+
+## Overall
+`r p1`
+----
+
+
+## Shockable vs. Non-Shockable Arrests
+
+
+# Demographics
+
+```{r demographics data, include=FALSE}
+# total
+total <- 
+  df_clean %>% 
+  filter(date_of_arrest >= "2020-01-01") %>% 
+  group_by(yr   = year(date_of_arrest),
+           mnth = month(date_of_arrest)) %>% 
+  summarise(n = n()) %>% 
+  mutate(new_date = as.Date(paste0(yr,"-",mnth,"-01")))
+
+# race
+race <- 
+  df_clean %>% 
+  filter(date_of_arrest >= "2020-01-01") %>% 
+  group_by(yr   = year(date_of_arrest),
+           mnth = month(date_of_arrest),
+           race_ethnicity) %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = 'race_ethnicity',
+              values_from = n,
+              values_fill = 0) %>% 
+  pivot_longer(cols = -c('yr', 'mnth'),
+               names_to = 'race_ethnicity',
+               values_to = 'n') %>% 
+  mutate(new_date = as.Date(paste0(yr,"-",mnth,"-01")),
+         prop     = n/sum(n)) %>% 
+  relocate(new_date, .before = 'yr')
+
+# gender
+gender <- 
+  df_clean %>% 
+  filter(date_of_arrest >= "2020-01-01",
+         gender %in% c('MALE', 'FEMALE')) %>% 
+  group_by(yr   = year(date_of_arrest),
+           mnth = month(date_of_arrest),
+           gender) %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = 'gender',
+              values_from = n,
+              values_fill = 0) %>% 
+  pivot_longer(cols = -c('yr', 'mnth'),
+               names_to = 'gender',
+               values_to = 'n') %>% 
+  mutate(new_date = as.Date(paste0(yr,"-",mnth,"-01")),
+         prop     = n/sum(n)) %>% 
+  relocate(new_date, .before = 'yr')
+
+
+# Gender + Race
+gender_race <- 
+  df_clean %>% 
+  filter(date_of_arrest >= "2020-01-01",
+         gender %in% c('MALE', 'FEMALE')) %>% 
+  group_by(yr     = year(date_of_arrest),
+           mnth   = month(date_of_arrest),
+           race_ethnicity,
+           gender) %>% 
+  summarise(n = n()) %>% 
+  pivot_wider(names_from = 'race_ethnicity',
+              values_from = n,
+              values_fill = 0) %>% 
+  pivot_longer(cols = -c('yr', 'mnth', 'gender'),
+               names_to = 'race_ethnicity',
+               values_to = 'n') %>% 
+  mutate(new_date = as.Date(paste0(yr,"-",mnth,"-01")),
+         prop     = n/sum(n)) %>% 
+  relocate(new_date, .before = 'yr')
+
+```
+
+```{r demographics graphs, echo=FALSE, fig.align='center'}
+# Graphs ----
+
+
+## race
+
+p2 <- 
+  ggplot(data = race,
+         aes(x = new_date,
+             y = prop,
+             fill = reorder(race_ethnicity, -prop))) +
+  geom_bar(stat = 'identity',
+           color = 'white', 
+           position = position_dodge()) +
+  expand_limits(y = 1) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b, '%y") +
+  scale_y_continuous(labels = percent_format(accuracy = 1),
+                     n.breaks = 9) +
+  scale_fill_viridis_d() +
+  # geom_text(aes(label = paste0(percent(prop, accuracy = 1))), 
+  #           #family = 'serif',
+  #           position = position_dodge2(width = 22.7),
+  #           size     = 2.4,
+  #           vjust = -.7) +
+  theme_tufte(base_size = 12) +
+  labs(title = "Percent of Non-Traumatic Cardiac Arrests by Race",
+       y     = "Percentage of Non-Traumatic Cardiac Arrests",
+       x     = "Months",
+       fill  = "Race") +
+  guides(fill = guide_legend(nrow = 3)) +
+  theme(plot.title = element_text(hjust = 0.5),
+        legend.position = "bottom") 
+
+p2
+
+# gender
+p3.1 <- 
+  ggplot(data = gender,
+         aes(x = as.factor(new_date),
+             y = n,
+             fill = gender)) +
+  geom_bar(stat = 'identity',
+           position = 'dodge') +
+  theme_tufte(base_size = 14)
+  theme(legend.position = "bottom")
+
+p3.2 <- 
+  ggplot(data = gender,
+         aes(x = new_date,
+             y = prop,
+             color = gender)) +
+  geom_line() +
+  geom_point() +
+  expand_limits(y = 1) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  scale_color_colorblind() +
+  theme_tufte(base_size = 14) +
+  theme(legend.position = "bottom")
+
+
+```
+
+
+
+## Overall number of non-traumatic resuscitations attempted
+
+`r p1`
+-------
+
+
+## Gender
+
+## Race
+
+
+
+```{r remove variables, include=FALSE}
+
+rm(df)
+```
