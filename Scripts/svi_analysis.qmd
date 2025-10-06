@@ -1,0 +1,820 @@
+---
+title: "DRAFT: Analysis on the distribution of patients transported from socially vulnerable area in Washington, D.C."
+date: "April 24, 2025"
+author: "Marshall Washick, M.S., NRP, IA"
+format:
+  html:
+    page-layout: full
+    embed-resources: true
+    citations-hover: true
+    footnotes-hover: true
+    mainfont: serif
+---
+
+```{r}
+#| title: libraries
+#| echo: false
+#| message: false
+#| warning: false
+
+
+library(splitstackshape)
+library(janitor)
+library(scales)
+library(ggthemes)
+library(legendry)
+library(patchwork)
+library(gt)
+library(gtsummary)
+library(tidyverse)
+
+# Regression packages
+
+library(nnet)
+library(ggeffects)
+library(broom.mixed)
+
+```
+
+```{r}
+#| title: data pull and clean
+#| echo: false
+#| message: false
+#| warning: false
+
+### Helper functions
+
+get_multinom_pval_tbl <- function(model, conf_level = 0.95) {
+  coefs <- summary(model)$coefficients
+  ses   <- summary(model)$standard.errors
+  z     <- coefs/ses
+  
+  stat_list <- list(
+    OR = exp(coefs),
+    conf.low = exp(coefs - qnorm(1 - (1 - conf_level)/2) * ses),
+    conf.high = exp(coefs + qnorm(1 - (1 - conf_level)/2) * ses),
+    p.value = 2 * (1 - pnorm(abs(z)))
+  )
+  
+  long_list <- purrr::imap(stat_list, function(mat, name) {
+    as.data.frame(mat) |> 
+      tibble::rownames_to_column("group") |> 
+      tidyr::pivot_longer(-group, names_to = "term", values_to = name)
+  })
+  
+  purrr::reduce(long_list, dplyr::left_join, by = c("group", "term"))
+}
+                        
+
+
+inject_pval <- function(tbl, corrected) {
+  join_cols <- intersect(c("group", "groupname_col", "label", "row_type", "variable"), names(tbl$table_body))
+  if(!"group" %in% names(tbl$table_body)) {
+    tbl$table_body$group <- tbl$table_body$groupname_col
+  }
+  
+  tbl$body <- tbl$table_body |> 
+    left_join(corrected, by = c("group", "variable" = "term")) |> 
+    mutate(p.value = coalesce(p.value.y, p.value.x)) |> 
+    select(-p.value.x, -p.value.y)
+  return(tbl)
+}
+###
+
+
+
+df          <- read_csv("_Data/hospital data/hospital_transport_data_2503_250421.csv")
+
+df_hosp_svi <- read_csv("_Data/hospital data/hospital_transport_svi_250424.csv")
+
+### DATA CLEANING
+
+
+
+# Variable names
+
+var_names    <- names(df) 
+
+new_names    <- sub(pattern = ".* - ", "", x = var_names, perl = T)
+
+colnames(df) <- new_names
+
+prime_hospitals <- c("H01", "H02", "H04",
+                     "H05", "H07", "H08",
+                     "H10", "H12", "H13")
+
+
+# Cleaning plus recoding
+df_cln <- 
+  
+  df |> 
+  clean_names() |> 
+  filter(incident_number != "9DEL9") |> 
+  mutate_at(
+    .vars = vars(unit_notified_by_dispatch_date_time:unit_back_in_service_date_time),
+    .funs = ymd_hms) |> 
+  mutate(date_of_birth = as.Date(date_of_birth),
+         unit_type     = case_when(str_detect(ems_unit_call_sign, "A[0-9]") ~ "Ambulance",
+                                   str_detect(ems_unit_call_sign, "AMR[0-9]") ~ "Ambulance",
+                                   str_detect(ems_unit_call_sign, "M[0-9]") ~ "Medic"),
+         patients_home_zip_code = as.numeric(patients_home_zip_code),
+         hospital_code          = str_extract(destination_transferred_to_name, "H\\d+")
+         ) |> 
+  rename(
+    disp_time = unit_notified_by_dispatch_date_time)
+
+df_address <- 
+  
+  df_cln |> 
+  select(incident_number,
+         incident_street_address_line_1:incident_zip_code) |> 
+  mutate_if(is.character, toupper) |> 
+  mutate(state = "DC") |> 
+  relocate(state, .after = "incident_city")
+
+
+#write.csv(df_address, file = "hospital_data_incident_address.csv")
+         
+# Data Cleaning for hospital and svi data frame
+
+df_hosp_svi_01 <- 
+  
+  df_hosp_svi |> 
+  select(incident_number, disp_time,
+         gender, race, age, age_units,
+         hospital_code, unit_type,
+         rpl_theme1, rpl_theme2, rpl_theme3,
+         rpl_theme4, rpl_themes, spl_theme1,
+         spl_theme2, spl_theme3, spl_theme4,
+         spl_themes) |> 
+  filter(!is.na(hospital_code),
+         !is.na(unit_type),
+         !is.na(age),
+         hospital_code %in% c("H05", "H08", "H13", "H04"),
+         age_units == "Years",
+         age >= 18,
+         rpl_themes != -999) |> 
+  mutate(
+    # Combined hospital 4 and hospital 13 into one hospital. For all intents and purposes
+    # they are the same facility.
+    hosp_code_new = case_when(hospital_code == "H13" | hospital_code == "H04" ~ "H13",
+                              TRUE ~ hospital_code))
+
+
+
+
+
+```
+
+## Introduction:
+
+As part of an initiative to improve the overarching EMS system in Washington, D.C. - the D.C. Fire & EMS Department has been engaging with local hospitals and D.C. Department of Health to develop and maintain dialogue, and share relevant data about where and why patients transported by ambulance are brought to a particular hospital in the District. There is an argument to be made that as the sole EMS provider in the District, FEMS has a responsibilty to ensure equity in distribution of patients to hospitals in the District. Equity defined broadly in this sense, is hospitals receive close to the same prorportion of patients as other, similar hospitals by service type availability in the District.
+
+In addition to the above initiative, examining the the role of social vulnerability is another component. We assess social vulnerability by the [Social Vulnerability Index](https://www.atsdr.cdc.gov/place-health/php/svi/index.html), which is a composite measure across four themes, and 16 dimensions. We know that individuals living in high social vulnerability areas tend to have less access to resources, face structural and economic barriers, and have poorer health and lower rates of individuals with health insurance. In short - individuals from high SVI areas are likely a real challenge for a health system to manage, and potentially place a higher burden on the system due to the amount of additional resources that are required to treat patients.
+
+Thus, the overall aim of this analysis is to assess the distribution of patients to three major hospitals in Washinton, D.C.: Howard University Hospital, George Washington Univ. Hospital, and MedStar Washington Hospital Center, and assess whether SVI has a role in who goes where. These hospitals absorb a large portion of patients from D.C. Fire and EMS, while offering the same level of services: trauma, STEMI/ACS, and stroke care. Therefore, offering a fairly equitable view of what kinds of patients are transported where, regardless of clinical need.
+
+## Data:
+
+Data pulled for this analysis were extracted from TripTix SAP Business Objects, filtered on eDisposition.01 equal to **Is not Null** and eTimes.03 greater than or equal to January 1, 2025. This resulted in 26753 records. After filtering for missing data, and narrowing to Howard University Hospital (H05), George Washington Univ. Hospital (H08) and MedStar Washington Hospital Center (H04 & H13), patients 18 years of age and older, and census tracts without recorded SVI data, 10659 records remain, resulting in `r percent(10659/26753)` of the data remaining for analysis.
+
+## Methods:
+
+This analysis used a multinomial logistic regression model to describe the probability of patients transported from high SVI geographies at the census tract level to be transported to H08 or H13, compared to H05. The primary objective was to assess the equipoise of patients distribution based on SVI, controlling for patient factors and assessing the EMS unit type as a moderating factor with SVI. The hypothesized model is as follows:
+
+$$
+\begin{align*}
+\log\left( \frac{P(Y = \text{Hospital}_k)}{P(Y = \text{Reference Hospital})} \right) &=
+\beta_{0k} +
+\beta_{1k} \cdot \text{SVI} +
+\beta_{2k} \cdot \text{ALS} +
+\beta_{3k} \cdot (\text{SVI} \times \text{ALS}) +
+\beta_{4k} \cdot \text{Age} +
+\beta_{5k} \cdot \text{Gender (Male)} +
+\beta_{6k} \cdot \text{Race (White)} \\
+&\quad +
+\beta_{7k} \cdot \text{Race (Hispanic/Latino)} +
+\beta_{8k} \cdot \text{Race (Other)}
+\end{align*}
+$$
+
+### Variable Definitions
+
+-   **Outcome Variable**: Hospital destination (`H08`, `H13`, or `H05` \[reference\]).
+-   **Primary Predictor**: The Social Vulnerability Index (SVI), based on the CDC/ATSDR 2022 percentile rank (0–1), joined by census tract.
+-   **EMS Unit Type**: Coded as ALS (Medic) vs. BLS (Ambulance, reference).
+-   **Demographics**:
+    -   **Age** (continuous)
+    -   **Gender**: Male vs. Female (reference)[^1]
+    -   **Race/Ethnicity**: White, Hispanic/Latino, Other, with Black/African American as the reference group
+
+[^1]: Note: Transgender, non-binary, and not disclosed were removed from the analysis due to small numbers (n\<20). This in no way diminishes the importance of understanding the the impact of social vulnerability on this patient population. However, a separate analysis is required to examine this further.
+
+### Model Specification
+
+The `nnet::multinom()` function in R was used to fit a multinomial logistic regression, using `H05` a the reference category. An interaction effect was added to test the effect between SVI and EMS unit type, and whether the effect of community-level vulnerability varied depending on the level of clinical care provided.
+
+### Statistical Tools and Evaluation
+
+-   Models were fit using the `nnet` package[^2] using R version 4.5[^3]
+-   Model fit and classification performance was evaluated by confusion matrix, Kappa statistic, and predicted probabilities by class.
+-   Visualizations of predicted probabilities and odds ratios were created using the `ggeffects`[^4], `ggplot2`[^5] and `broom`[^6] packages.
+
+[^2]: Venables, W. N. & Ripley, B. D. (2002) Modern Applied Statistics with S. Fourth Edition. Springer, New York. ISBN 0-387-95457-0
+
+[^3]: R Core Team (2025). *R: A Language and Environment for Statistical Computing*. R Foundation for Statistical Computing, Vienna, Austria. <https://www.R-project.org/>
+
+[^4]: Lüdecke D (2018). “ggeffects: Tidy Data Frames of Marginal Effects from Regression Models.” *Journal of Open Source Software*, *3*(26), 772. doi:10.21105/joss.00772 <https://doi.org/10.21105/joss.00772>.
+
+[^5]: H. Wickham. ggplot2: Elegant Graphics for Data Analysis. Springer-Verlag New York, 2016.
+
+[^6]: Robinson D, Hayes A, Couch S (2025). *broom: Convert Statistical Objects into Tidy Tibbles*. doi:10.32614/CRAN.package.broom <https://doi.org/10.32614/CRAN.package.broom>, R package version 1.0.8, <https://CRAN.R-project.org/package=broom>.
+
+## Analysis:
+
+Patient demographics for this analysis are similar to the overall patient population EMS engages with: slightly more female, primarily Black/African-American, and roughly between 35 and 70 years of age, see *Table 1*.
+
+*Table 2.* shows the break down of demographics across hospitals. Some noticable difference are seen in across gender and race by hospital. Specifically, there is a slightly higher proportion of male patients brought to `H05` than the other two hospitals. `H08` shows a slightly lower proportion of Black/African-American patients, and a moderately higher proportion of White patients compared to `H05` and `H13`. Additionally, `H05` tends to have a slightly younger patient population.
+
+```{r}
+#| title: patient summary
+#| echo: false
+#| warning: false
+
+
+demo_tbl <- 
+  df_hosp_svi_01 |> 
+  select(gender:age) |> 
+  tbl_summary(
+    label = list('gender' = 'Gender',
+                 'race' = 'Race',
+                 'age' = 'Age'),
+    sort = all_categorical(FALSE) ~ "frequency") |> 
+  as_gt() |> 
+  tab_header(title = "Table 1. Demographics") |> 
+  tab_style(
+    style = cell_text(size = pct(75)),
+    location = cells_body()) |> 
+  tab_options(
+    table.width = px(700))
+
+demo_hosp_tble <- 
+  df_hosp_svi_01 |> 
+  select(hosp_code_new, gender:age) |> 
+  mutate(
+    hosp_code_new = factor(hosp_code_new, levels = c("H05", "H13", "H08")),
+    hosp_code_new = case_when(
+      hosp_code_new == "H05" ~ "(Ref) Howard Univ. Hospital",
+      hosp_code_new == "H08" ~ "George Washington Univ. Hospital",
+      hosp_code_new == "H13" ~ "MedStar WHC")) |> 
+  tbl_summary(by = hosp_code_new,
+              label = list(
+                'gender' = 'Gender',
+                'race'   = 'Race',
+                'age'    = 'Age'),
+              sort = all_categorical(FALSE) ~ "frequency") |> 
+  as_gt() |> 
+  tab_header(title = "Table 2. Demographics by Hospital") |>
+  tab_style(
+    style = cell_text(size = pct(75)),
+    location = list(cells_column_labels(),
+                    cells_body())) |> 
+  tab_options(
+    table.width = px(900))
+
+
+```
+
+```{r}
+#| message: false
+#| warning: false
+#| include: false
+#| title: regression modeling
+
+
+# Recoding hospitals
+
+df_hosp_svi_01$hosp_code_new <- relevel(factor(df_hosp_svi_01$hosp_code_new), ref = "H05")
+
+
+###  Multinomial model  ###
+# Notes:
+# We are using a multinomial model to assess the differences in the average SVI score of where patients are transported from in Washington, D.C. to Howard, GWU, and Medstar Washington Hospital Center. Additionally, we aim to assess the log-odds of being transported to Howard University from a higher SVI census tract, compared to Washington Hospital Center and GWU, while controlling for patient demographics and ambulance unit type.
+# 
+# Hypothesis: There is an association between SVI score and Hospital Destination.
+
+# Additioanl cleaning:
+# 1) Only keeping male and female due to low numbers of other genders
+# 2) Combining Asia, Pacific Islanders, and American Indian to balance race; also removing not recorded due to balance
+
+
+
+# Data frame for modeling
+
+df_mnr_model <- df_hosp_svi_01 |> 
+  filter(race != "Not Recorded",
+         gender %in% c("Male", "Female")) |> 
+  mutate(race_new = case_when(
+    race != "White" & race != "Black or African American" & race != "Hispanic or Latino" ~ "Other",
+    TRUE ~ race))
+
+
+
+# Model 1: First Model
+
+model_01 <- multinom(hosp_code_new ~ rpl_themes + age + gender + race_new + unit_type, data = df_mnr_model)
+
+
+z_score_01  <- summary(model_01)$coefficients/summary(model_01)$standard.errors
+p_values_01 <- 2 * (1 - pnorm(abs(z_score_01)))
+
+
+
+# Model 2: testing interaction between rpl_themes and unit_type
+
+model_02 <- multinom(hosp_code_new ~ rpl_themes * unit_type + age + gender + race_new , data = df_mnr_model)
+
+z_score_02  <- summary(model_02)$coefficients/summary(model_02)$standard.errors
+p_values_02 <- 2 * (1 - pnorm(abs(z_score_02)))
+
+
+
+# Model 3: Base model
+
+model_base <- multinom(hosp_code_new ~ age + gender + race_new + unit_type, data = df_mnr_model)
+
+
+
+# Model 4: Unadjusted on hospital and SVI
+model_svi <- multinom(hosp_code_new ~ rpl_themes, data = df_mnr_model)
+
+
+z_score_svi  <- summary(model_svi)$coefficients/summary(model_svi)$standard.errors
+p_values_svi <- 2 * (1- pnorm(abs(z_score_svi)))
+
+
+
+
+
+## DIAGNOSTICS
+
+aic_output   <- AIC(model_svi, model_base, model_01, model_02)
+anova_output <- stats::anova(model_svi, model_base, model_01, model_02)
+
+
+
+# Regression Tables
+
+
+# Corrected p-value tables for each model
+corrected_pval_03 <- get_multinom_pval_tbl(model_svi)
+
+corrected_pval_04 <- get_multinom_pval_tbl(model_base)
+
+corrected_pval_05 <- get_multinom_pval_tbl(model_02)
+
+
+## Unadjusted Table
+model_svi_reg_tbl <- 
+  
+  tbl_regression(
+  model_svi,
+  exponentiate = TRUE,
+  intercept = T,
+  label = list(
+    rpl_themes ~ "SVI percentile rank")) |>
+  inject_pval(corrected_pval_03) |> 
+  bold_labels() |> 
+  
+  as_gt() |>  
+  text_transform(
+    location = cells_row_groups(),
+    fn = function(x) map_chr(x, ~ recode(.x,
+                            "H08" = "GWU Hospital",
+                            "H13" = "MedStar WHC"))
+    ) |> 
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()) |> 
+  tab_header(
+    title = "Table 3. Unadjusted Multinomial Logisitic Regression") |> 
+  tab_footnote(footnote = md("*Intecept interpretation: the exponentiated log-odds of being transported to each hospital compared to Howard Univ. Hospital when an SVI percentile rank is 0*"))  |> 
+  tab_style(
+    style = cell_text(size = pct(75)),
+    location = list(cells_group(),
+                    cells_body())) |> 
+  tab_options(
+    table.width = px(700))
+
+
+
+
+
+## Adjusted without SVI
+
+model_base_reg_tbl <- 
+  
+  tbl_regression(
+  model_base,
+  exponentiate = TRUE,
+  conf.level = .95,
+  label = list(
+    unit_type ~ "ALS Unit",
+    age ~ "Age",
+    gender ~ "Gender",
+    race_new ~ "Race"
+  )
+) |> 
+  inject_pval(corrected_pval_04) |> 
+  bold_labels() |> 
+  
+  as_gt() |>
+  text_transform(
+    location = cells_row_groups(),
+    fn = function(x) map_chr(x, ~ recode(.x,
+                            "H08" = "GWU Hospital",
+                            "H13" = "MedStar WHC"))
+    ) |>  
+  tab_header(
+    title = "Table 4. Multinomial Logisitic Regression") |> 
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()) |> 
+  tab_style(
+    style = cell_text(size = pct(75)),
+    location = list(cells_group(),
+                    cells_body())) |> 
+  tab_options(
+    table.width = px(700))
+
+
+## Final Model
+model_02_reg_tbl <- 
+  
+  tbl_regression(
+  model_02,
+  exponentiate = TRUE,
+  label = list(
+    
+    rpl_themes ~ "SVI (Percentile Rank)",
+    unit_type ~ "ALS Unit",
+    age ~ "Age",
+    gender ~ "Gender",
+    race_new ~ "Race"
+  )
+) |> 
+  inject_pval(corrected_pval_05) |> 
+  bold_labels() |> 
+  
+  as_gt() |>
+  text_transform(
+    location = cells_row_groups(),
+    fn = function(x) map_chr(x, ~ recode(.x,
+                            "H08" = "GWU Hospital",
+                            "H13" = "MedStar WHC"))
+    ) |> 
+  tab_header(
+    title = "Table 5. Multinomial Logisitic Regression")  |> 
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups()) |> 
+  tab_style(
+    style = cell_text(size = pct(75)),
+    location = list(cells_group(),
+                    cells_body())) |> 
+  tab_options(
+    table.width = px(700))
+
+
+```
+
+::: panel-tabset
+## Table 1. Demographics
+
+```{r tbl-one}
+#| echo: false
+#| warning: false
+
+demo_tbl
+```
+
+## Table 2. Demographics by Hospital
+
+```{r tbl-two}
+#| echo: false
+#| warning: false
+
+demo_hosp_tble
+```
+
+## Table 3. Unadjusted Model
+
+```{r tbl-three}
+#| echo: false
+#| warning: false
+
+model_svi_reg_tbl
+
+```
+
+## Table 4. Adjusted based without SVI
+
+```{r tbl-four}
+#| echo: false
+#| warning: false
+
+model_base_reg_tbl
+
+```
+
+## Table 5. Adjusted with SVI, patient factors, and interaction
+
+```{r tbl-five}
+#| echo: false
+#| warning: false
+
+model_02_reg_tbl
+
+```
+:::
+
+
+
+```{r}
+#| message: false
+#| warning: false
+#| include: false
+
+
+effects_svi  <- ggpredict(model_svi, terms = "rpl_themes")
+
+effects_base <- ggpredict(model_base)
+
+effects_02   <- ggpredict(model_02, terms = c("rpl_themes", "unit_type"))
+
+
+
+
+## Unadjusted plot: hospital vs. svi
+
+
+effects_plot_svi <-
+  
+  ggplot(effects_svi, aes(x = x, y = predicted)) +
+  geom_line() +
+  scale_y_continuous(guide = guide_axis(minor.ticks = T)) +
+  labs(title    = "Predicted Probability of Hospital Destination by Social Vulnerability Index (SVI)",
+       subtitle = "Unadjusted multinomial logistic regression with SVI",
+    x = "SVI (Percentile Rank)",
+    y = "Predicted Probability") +
+  facet_wrap(~response.level) +
+  theme_classic()
+
+
+
+## Adjusted plot: without SVI
+
+
+
+
+
+
+# Adjusted with SVI and interaction
+
+effects_plot_01 <- 
+  
+  ggplot(effects_02,(aes(x = x, y = predicted, color = response.level))) +
+  geom_line(linewidth = .8) +
+  facet_wrap(~group, labeller = labeller(group = c("Ambulance" = "BLS Units",
+                                                   "Medic" = "ALS Units"))) +
+  scale_y_continuous(labels = scales::label_percent(),
+                     guide = guide_axis(minor.ticks = T)) +
+  scale_color_manual(values = c("H05" = "#005EA2", "H08" = "#28A197", "H13" = "#C5000B")) +
+  labs(
+    title = "Predicted Probability of Hospital Destination by Social Vulnerability Index (SVI)",
+    subtitle = "Stratified by EMS Unit Type (ALS vs. BLS)",
+    x = "SVI (Percentile Rank)",
+    y = "Predicted Probability",
+    color = "Hospital") +
+  theme_classic() +
+  theme(
+    legend.position = "bottom")
+
+
+
+# Predicted Classes and Confusion Matrix
+
+pred_classes     <- predict(model_02)
+confusion_matrix <- caret::confusionMatrix(factor(pred_classes), factor(df_mnr_model$hosp_code_new))
+
+conf_tbl <- as.data.frame(confusion_matrix$table)
+names(conf_tbl) <- c("Predicted", "Reference", "N")
+
+conf_tbl <- conf_tbl |> 
+  group_by(Reference) |> 
+  mutate(Percent = round(N/sum(N) * 100, 1)) |> 
+  ungroup()
+
+
+conf_wide <- conf_tbl |> 
+  pivot_wider(names_from = Reference, values_from = N, values_fill = 0)
+
+conf_gt <- 
+
+  conf_wide |> 
+  gt(rowname_col = "Predicted") |> 
+  tab_header(
+    title = "Confusion Matrix",
+    subtitle = "Predicted vs. Actual Hospital Destination") |> 
+  fmt_number(everything(), decimals = 0)
+
+# Actual vs. Predicted hospital by SVI
+
+
+
+df_mnr_model$predicted <- predict(model_02, type = 'class')
+
+ggplot(df_mnr_model, aes(x = rpl_themes, fill = predicted)) +
+  geom_density(alpha = 0.4) +
+  facet_grid(hosp_code_new ~ predicted)
+
+# Forest Plot!!
+
+
+or_tbl <- get_multinom_pval_tbl(model_02)
+
+tbl_mod_02 <- or_tbl |> 
+  filter(term != "(Intercept)") |> 
+  mutate(
+    label = case_when(
+           term == "unit_typeMedic" ~ "ALS Unit (Medic)",
+           term == "genderMale" ~ "Gender: Male",
+           term == "race_newWhite" ~ "Race: White",
+           term == "race_newOther" ~ "Race: Other",
+           term == "race_newHispanic or Latino" ~ "Race: Hispanic/Latino",
+           term == "rpl_themes" ~ "Social Vulnerability Index",
+           term == "rpl_themes:unit_typeMedic" ~ "SVI x ALS Interaction",
+           term == "age" ~ "Age", 
+           TRUE ~ term),
+         color_group = case_when(
+           conf.high > 1 ~ "Increased Odds",
+           conf.low < 1 ~ "Decreased Odds",
+           T ~ "Neutral (OR = 1)") 
+         )
+
+fp_mod_02 <- 
+  
+  ggplot(tbl_mod_02, aes(x = reorder(label, OR), y = OR, color = color_group)) +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  geom_hline(aes(yintercept = 1), linetype = "dashed", color = "grey40") +
+  scale_color_manual(
+    values = c("Increased Odds" = "#0072bc", "Decreased Odds" = "#c5000b",
+               "Neutral (OR = 1)" = "white")) +
+  facet_wrap(~ group,
+             ncol = 1,
+             label = labeller(group = c("H08" = "GWU Hospital", 
+                                        "H13" = "MedStar WHC"))) +
+  scale_y_log10(n.breaks = 8,
+                guide = guide_axis_logticks()) +
+  coord_flip() +
+  labs(title = "Forest Plot: Odds Ratio by Hospital (vs. Howard Univ. Hospital)",
+       subtitle = "Multinomial logistic regression with SVI, race, gender, unit type, age, and interaction",
+       color = "Odds Ratio Direction",
+       x = NULL,
+       y = "Odds Ratios (log scale)") +
+  theme_classic() +
+  theme(
+    legend.position = 'bottom')
+
+# or_plot <- 
+# tidy(model_02, exponentiate = T) |> 
+#   filter(term != "(Intercept)") |> 
+#   mutate(abs_est = abs(estimate),
+#          label = case_when(
+#            term == "unit_typeMedic" ~ "ALS Unit (Medic)",
+#            term == "genderMale" ~ "Gender: Male",
+#            term == "race_newWhite" ~ "Race: White",
+#            term == "race_newOther" ~ "Race: Other",
+#            term == "race_newHispanic or Latino" ~ "Race: Hispanic/Latino",
+#            term == "rpl_themes" ~ "Social Vulnerability Index",
+#            term == "rpl_themes:unit_typeMedic" ~ "SVI x ALS Interaction",
+#            term == "age" ~ "Age", 
+#            TRUE ~ term),
+#          color_group = case_when(
+#            round(estimate, 2) == 1 ~ "Neutral (OR = 1)",
+#            estimate > 1 ~ "Increased Odds",
+#            estimate < 1 ~ "Decreased Odds") 
+#          )|> 
+#   ggplot(aes(x = reorder(label, abs_est), y = abs_est, color = color_group)) +
+#   geom_point() + 
+#   geom_hline(aes(yintercept = 1), linetype = 'dashed', color = 'grey40') +
+#   scale_y_continuous(breaks = seq(0, 4, 1),
+#                      guide = guide_axis(minor.ticks = T)) +
+#   coord_flip() +
+#   facet_wrap(~y.level) +
+#   labs(title    = "Odds Ratios by Hospital (vs. Hospital-05)",
+#        subtitle = "Multinomial logistic regression with SVI, race, gender, unit type, age, and interaction",
+#        x = "Predictor",
+#        y = "Odds Ratio (log scale)",
+#        fill = "Odds Ratio Direction vs. H05") +
+#   scale_fill_manual(
+#     values = c("Increased Odds" = "#0072B2",
+#                "Decreased Odds" = "#C5000B",
+#                "Neutral (OR = 1)" = 'white')) +
+#   theme_classic() +
+#   theme(
+#     legend.position = 'bottom')
+    
+```
+
+```{r}
+# Age
+age_plot <- ggplot(effects_base$age, aes(x = x, y = predicted, color = response.level)) + 
+  geom_line() +
+  scale_x_continuous(breaks = seq(18, 100, 9)) +
+  scale_y_continuous(limits = c(.15, .55),
+                     breaks = seq(.1, .6, .05)) +
+  labs(
+    title = "Predicted Probability of Transport to Hospital based on age",
+    y     = "Predicted Probability",
+    x     = "Age in years",
+    color = "Hospital") +
+  theme_classic()
+
+# Gender
+
+gender_plot <- ggplot(effects_base$gender, aes(x = x, y = predicted, 
+                                shape = response.level, color = response.level)) + 
+  geom_point(size = 3) +
+  theme_classic()
+
+# Race
+
+race_plot <- ggplot(effects_base$race_new, aes(x = x, y = predicted, 
+                                  color = response.level, group = response.level)) +
+  geom_point(size = 3) + 
+  theme_classic()
+
+
+# Unit Type
+
+unit_type_plot <- ggplot(effects_base$unit_type, aes(x = x, y = predicted, color = response.level)) +
+  geom_point(size = 3) +
+  theme_classic()
+
+```
+
+
+
+```{r}
+#| echo: false
+confusion_matrix
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 8
+#| fig-width: 9
+
+
+fp_mod_02
+```
+
+### Model Summary
+
+The final model reveals meaningful patterns in how patients are distributed across hospitals based on social vulnerability, race, gender, and transport acuity. Patients from higher social vulnerability areas (as measured by the SVI percentile rank) were significantly less likely to be transported to George Washington University Hospital (H08) compared to Howard University Hospital (H05), even after adjusting for age, race, gender, and EMS unit type.
+
+This pattern was not observed for MedStar Washington Hospital Center (H13), where SVI alone was not a significant predictor of hospital destination. However, ALS (Advanced Life Support) units were consistently more likely to transport to both H08 and H13 compared to BLS (Basic Life Support), indicating a strong acuity-based sorting pattern.
+
+Notably, White patients had over twice the odds of being transported to H08 than Black patients, controlling for all other factors, while male patients were less likely to be transported to either H08 or H13. Although the interaction between SVI and ALS unit type was not statistically significant, the directional trend suggested that high-SVI patients transported by ALS may still be less likely to reach these higher-resourced hospitals.
+
+Taken together, these findings raise important questions about the equity of hospital destination patterns in the EMS system, particularly for patients from more vulnerable communities.
+
+## Summary
+
+The final multinomial logistic regression model, assessing the effects of Social Vulnerability Index (SVI), EMS transport type, and patient demographics on hospital destination among three major hospitals in Washington, D.C. revealed critical insight into the equity in EMS destination patterns:
+
+-   **SVI significantly reduced the odds** of transport to GWU Hospital compared to Howard Univ. Hospital (OR 3.07, 95% CI: 0.50-0.76), suggesting that patients from more socially vulnerable areas were less likely to be transported there.
+
+-   **MedStar WHC** showed **no significant association** with SVI (OR 1.11, 95% CI: 0.90-1.37), but transport was heavily influenced by unit type, particularly ALS units (OR 3.07, 95% CI: 2.28-4.12)
+
+-   **White patients had over twice the odds** of being transported to GWU Hospital than Black patients (OR 2.05, 95% CI: 1.73-2.42), even after controlling for other variables.
+
+-   **ALS transports were more likely** to go to both GWU Hospital and MedStar WHC, reinforcing the influence of clinical acuity on destination.
+
+-   The **interaction between SVI and EMS unit type** was not statistically significant but *directionally suggestive*, indicating potential under-transport of high-SVI patients to higher-resourced hospitals when care level increases.
+
+## Limitations
+
+This analysis has several limitations that are important to consider, and should used to inform interpretation of the findings.
+
+First, while the model performed significantly better than random assignment, overall accuracy remained modest (43%) and Kappa statistics indicated only slight aggreement beyond chance. This suggest meaningful limitations in the models ability to reliably classify hospital destination at the individual level, possibly due to unmeasured confounding factors or inherent noise in the routing decisions.
+
+Second, the model does not account for real-time operational constraints such as hospital diversion status, ED overcrowding, patient/provider preferences, or geographic proximity at the time of transport. These factors likely play a role in hospital selection and could confound associations with SVI, race, or EMS unit type.
+
+Third, the SVI index includes dimensions of race, poverty, housing, and transportation, which may introduce multicollinearity when combined with race and gender variables in the model. While conceptually distinct, these overalapping dimensions may blur the interpretability of individual predictor effects.
+
+Although the model included an interaction term between SVI and EMS unit type, it was not statistically significant. However, interaction terms often require larger sample sizes to detect meaningful effects, and the directional signal observed may still reflect important equity-relevant patterns that warrant further investigation.
