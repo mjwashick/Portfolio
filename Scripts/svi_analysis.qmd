@@ -797,7 +797,7 @@ Taken together, these findings raise important questions about the equity of hos
 
 The final multinomial logistic regression model, assessing the effects of Social Vulnerability Index (SVI), EMS transport type, and patient demographics on hospital destination among three major hospitals in Washington, D.C. revealed critical insight into the equity in EMS destination patterns:
 
--   **SVI significantly reduced the odds** of transport to GWU Hospital compared to Howard Univ. Hospital (OR 3.07, 95% CI: 0.50-0.76), suggesting that patients from more socially vulnerable areas were less likely to be transported there.
+-   **SVI significantly reduced the odds** of transport to GWU Hospital compared to Howard Univ. Hospital (OR 0.62, 95% CI: 0.50-0.76), suggesting that patients from more socially vulnerable areas were less likely to be transported there.
 
 -   **MedStar WHC** showed **no significant association** with SVI (OR 1.11, 95% CI: 0.90-1.37), but transport was heavily influenced by unit type, particularly ALS units (OR 3.07, 95% CI: 2.28-4.12)
 
