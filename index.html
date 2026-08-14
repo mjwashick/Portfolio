@@ -1,1 +1,210 @@
-<h1>Hello!</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marshall Washick — Analytics Portfolio</title>
+<meta name="description" content="Quality improvement and clinical analytics in prehospital and emergency care. Selected analyses, code, and improvement work.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0F1B2A;
+    --paper:#FAFAF8;
+    --slate:#44536A;
+    --rule:#D5DBE3;
+    --signal:#0E7C86;
+    --mark:#A8560C;
+    --measure:44rem;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font:400 1.0625rem/1.65 "IBM Plex Sans",system-ui,sans-serif;
+    padding:0 1.5rem;
+  }
+  .wrap{max-width:var(--measure);margin:0 auto;padding:4.5rem 0 6rem}
+
+  /* ---- masthead ---- */
+  .eyebrow{
+    font:500 .6875rem/1 "IBM Plex Mono",monospace;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--signal);
+    margin:0 0 1.25rem;
+  }
+  h1{
+    font:600 clamp(2.1rem,6vw,3.1rem)/1.08 "Spectral",Georgia,serif;
+    letter-spacing:-.015em;margin:0 0 .5rem;
+  }
+  .standfirst{
+    font:400 1.1875rem/1.5 "Spectral",Georgia,serif;
+    color:var(--slate);margin:0 0 1.5rem;max-width:34rem;
+  }
+  .roles{
+    font:400 .875rem/1.7 "IBM Plex Sans",sans-serif;
+    color:var(--slate);margin:0 0 2.75rem;
+  }
+  .roles span{white-space:nowrap}
+  @media (max-width:620px){ .roles span{white-space:normal} }
+
+  /* ---- signature: real artifact as hero ---- */
+  figure.hero{margin:0 0 1rem;padding:0}
+  figure.hero img{
+    width:100%;height:auto;display:block;
+    border:1px solid var(--rule);border-radius:2px;background:#fff;
+  }
+  figcaption{
+    font:400 .8125rem/1.55 "IBM Plex Sans",sans-serif;
+    color:var(--slate);margin-top:.75rem;
+  }
+  figcaption b{color:var(--ink);font-weight:600}
+
+  /* ---- section rule with SPC centre-line tick ---- */
+  .divider{
+    position:relative;height:1px;background:var(--rule);
+    margin:3.75rem 0 2rem;border:0;
+  }
+  .divider::after{
+    content:"";position:absolute;left:0;top:-3px;width:22px;height:7px;
+    border-left:1px solid var(--signal);border-right:1px solid var(--signal);
+  }
+  h2{
+    font:500 .75rem/1 "IBM Plex Mono",monospace;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--slate);
+    margin:0 0 1.75rem;
+  }
+
+  /* ---- entries ---- */
+  .entry{padding:0 0 2.25rem;margin:0 0 2.25rem;border-bottom:1px solid var(--rule)}
+  .entry:last-child{border-bottom:0;margin-bottom:0;padding-bottom:0}
+  .entry h3{
+    font:600 1.375rem/1.25 "Spectral",Georgia,serif;
+    margin:0 0 .3rem;letter-spacing:-.01em;
+  }
+  .entry h3 a{color:var(--ink);text-decoration:none;background-image:linear-gradient(var(--signal),var(--signal));
+    background-size:100% 1px;background-repeat:no-repeat;background-position:0 100%;padding-bottom:1px}
+  .entry h3 a:hover,.entry h3 a:focus-visible{color:var(--signal)}
+  .meta{
+    font:400 .75rem/1 "IBM Plex Mono",monospace;
+    color:var(--slate);margin:0 0 .85rem;
+  }
+  .entry p{margin:0 0 .9rem;color:#243244}
+  .q{color:var(--slate);font-style:italic;font-family:"Spectral",Georgia,serif;font-size:1.0625rem}
+
+  .chips{list-style:none;display:flex;flex-wrap:wrap;gap:.4rem;padding:0;margin:0}
+  .chips li{
+    font:400 .6875rem/1 "IBM Plex Mono",monospace;
+    color:var(--slate);border:1px solid var(--rule);
+    border-radius:2px;padding:.35rem .5rem;background:#fff;
+  }
+
+  .links{margin:.9rem 0 0;font:400 .8125rem/1.6 "IBM Plex Sans",sans-serif}
+  .links a{color:var(--signal);text-decoration:none;border-bottom:1px solid rgba(14,124,134,.35)}
+  .links a:hover,.links a:focus-visible{border-bottom-color:var(--signal)}
+  .links span{color:var(--rule);margin:0 .5rem}
+
+  /* ---- data note ---- */
+  .note{
+    border-left:2px solid var(--mark);padding:.15rem 0 .15rem 1rem;
+    font:400 .875rem/1.6 "IBM Plex Sans",sans-serif;color:var(--slate);
+    margin:0 0 1rem;
+  }
+
+  footer{margin-top:4rem;font:400 .875rem/1.7 "IBM Plex Sans",sans-serif;color:var(--slate)}
+  footer a{color:var(--signal);text-decoration:none;border-bottom:1px solid rgba(14,124,134,.35)}
+
+  a:focus-visible{outline:2px solid var(--signal);outline-offset:3px;border-radius:2px}
+
+  @media (max-width:480px){
+    body{padding:0 1.1rem}
+    .wrap{padding:3rem 0 4rem}
+    .chips li{font-size:.65rem}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">Analytics Portfolio</p>
+  <h1>Marshall Washick</h1>
+  <p class="standfirst">Quality improvement and clinical analytics in prehospital and emergency care.</p>
+  <p class="roles">
+    M.S., NRP &nbsp;·&nbsp; <span>Continuous Quality Improvement Manager &amp; Agency Data Officer, D.C. Fire and EMS</span><br>
+    <span>Co-Chair, Measure Analysis and Research Committee, National EMS Quality Alliance</span>
+  </p>
+
+  <figure class="hero">
+    <img src="figures/qi-weight-documentation/05_goal_achievement_run.png"
+         alt="Run chart of weekly ePCR weight documentation compliance across 2021, showing the median re-centred at each of four sustained shifts, rising from roughly 29 percent to roughly 99 percent.">
+    <figcaption><b>Documentation compliance, weekly, 2021.</b> Four sustained shifts, median re-centred at each. Roughly 29% to roughly 99% — without adding a single field to the chart. Every artifact below was built for a decision someone actually had to make.</figcaption>
+  </figure>
+
+  <hr class="divider">
+  <h2>Selected analyses</h2>
+
+  <article class="entry">
+    <h3><a href="analyses/svi-hospital-destination.html">Social Vulnerability as a Predictor of Hospital Destination</a></h3>
+    <p class="meta">April 2025</p>
+    <p class="q">Does the vulnerability of your neighborhood predict which hospital the ambulance takes you to?</p>
+    <p>D.C. Fire and EMS is the District's sole 911 transport provider, which gives that question real stakes. I modeled destination across 10,659 adult transports against CDC/ATSDR Social Vulnerability Index percentile rank joined at census tract, controlling for age, sex, race and ethnicity, and testing ALS versus BLS unit type as a moderator. The three receiving hospitals compared offer equivalent trauma, STEMI/ACS, and stroke service lines — so destination differences are harder to attribute to clinical necessity.</p>
+    <ul class="chips">
+      <li>multinomial logistic regression</li><li>interaction terms</li><li>census-tract linkage</li><li>R / Quarto</li>
+    </ul>
+    <p class="links"><a href="analyses/svi-hospital-destination.html">Rendered report</a><span>·</span><a href="analyses/svi-hospital-destination.pdf">PDF</a><span>·</span><a href="code/svi_analysis.qmd">Source</a></p>
+  </article>
+
+  <article class="entry">
+    <h3><a href="analyses/hospital-liaison-officer.pdf">The Hospital Liaison Officer Pilot and ED Turnaround Time</a></h3>
+    <p class="meta">D.C. Fire and EMS, Office of the Medical Director</p>
+    <p class="q">Crews were holding patients on stretchers for hours. Did putting an officer inside the ED change that — and what did it buy?</p>
+    <p>Evaluated with three families of Shewhart charts, using a square-root transformation of time-in-seconds to stabilize variance, with subgroups by agency and by the four hospitals receiving over 70% of transports. A log-linear model then converted the drop-time change into the currency leadership actually budgets in: recovered capacity, expressed as additional 911 responses available for the same committed unit-hours.</p>
+    <ul class="chips">
+      <li>Shewhart X̄ / S / Individuals</li><li>variance stabilization</li><li>log-linear regression</li><li>subgroup analysis</li>
+    </ul>
+    <p class="links"><a href="analyses/hospital-liaison-officer.pdf">Read the report</a></p>
+  </article>
+
+  <article class="entry">
+    <h3><a href="analyses/video-laryngoscopy-oat.pdf">Video Laryngoscopy Systems by Orthogonal Array Testing</a></h3>
+    <p class="meta">January 2025 · EQuIP national airway collaborative</p>
+    <p class="q">Five factors, three systems, and no appetite for a 96-run experiment.</p>
+    <p>Instead of testing one variable at a time, an L12(3¹,2⁴) orthogonal array evaluated three video laryngoscope systems alongside one- versus two-person technique, bougie versus rigid stylet, BVM size, and ventilation feedback. Five paramedics each completed 12 randomized intubations on a high-fidelity simulator, with intubation intervals measured instrumentally rather than by stopwatch. Twelve runs where a full factorial would have needed ninety-six — and the hypotheses, including the null ones, were written down first.</p>
+    <ul class="chips">
+      <li>design of experiments</li><li>orthogonal array L12(3¹,2⁴)</li><li>run charts</li><li>small multiples</li>
+    </ul>
+    <p class="links"><a href="analyses/video-laryngoscopy-oat.pdf">Read the report</a></p>
+  </article>
+
+  <article class="entry">
+    <h3><a href="figures/qi-weight-documentation/">ePCR Weight Documentation Improvement</a></h3>
+    <p class="meta">2021</p>
+    <p class="q">Can you move documentation compliance without adding burden to the people documenting?</p>
+    <p>The chart at the top of this page is the last panel of this series. Read the five in order: baseline, three sequential improvement experiments, then goal achievement. The median is re-centred at each demonstrated shift rather than smoothed across the year, which is the difference between a run chart that shows what happened and one that hides it.</p>
+    <ul class="chips">
+      <li>run chart rules</li><li>shifted medians</li><li>sequential PDSA cycles</li>
+    </ul>
+    <p class="links"><a href="figures/qi-weight-documentation/">View the series</a></p>
+  </article>
+
+  <hr class="divider">
+  <h2>Also here</h2>
+
+  <p><strong>Figures</strong> — annotated run charts, cumulative sum charts for cardiac arrest, a t-chart for time between rare events, ridgeline and carpet plots of CPR pause distributions pulled from defibrillator device data, and before-and-after stroke scale distributions. <a href="figures/">Browse</a></p>
+
+  <p><strong>Presentations</strong> — including <em>The State of Cardiac Arrest Performance in the District of Columbia</em>, delivered to the D.C. Resuscitation Collaborative in July 2021, covering system performance from 2016 through 2021. <a href="presentations/">Browse</a></p>
+
+  <hr class="divider">
+  <h2>On the data</h2>
+  <p class="note">No patient data is committed to this repository. Analysis scripts read from local, uncommitted directories. Published figures are aggregate, and hospitals appear under coded identifiers except where already public.</p>
+
+  <footer>
+    <a href="https://github.com/mjwashick/Portfolio">Repository</a> &nbsp;·&nbsp;
+    <a href="mailto:marshall.washick@gmail.com">marshall.washick@gmail.com</a>
+  </footer>
+
+</div>
+</body>
+</html>

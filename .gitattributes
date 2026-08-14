@@ -1,0 +1,5 @@
+# Rendered analysis outputs are documentation, not source.
+# Without this the repo language badge reads "HTML" instead of "R".
+*.html linguist-documentation
+*.qmd  linguist-detectable
+*.qmd  linguist-language=R
