@@ -70,7 +70,7 @@ Selected visualization work in [`figures/`](figures/) — annotated run charts, 
 
 ## Methods index
 
-`Multinomial logistic regression` · `Generalized linear models` · `Statistical process control (Shewhart X̄, S, Individuals, t-charts)` · `Run chart rules and shifted medians` · `Design of experiments / orthogonal arrays` · `Log-linear regression` · `Variance-stabilizing transformation` · `Geospatial linkage at census-tract level` · `Small multiples and distributional visualization`
+`Multinomial logistic regression` · `Generalized linear models` · `Statistical process control (Shewhart Charts, Cp/Cpk)` · `Run chart rules` · `Design of experiments / orthogonal arrays` · `Log-linear regression` · `Variance-stabilizing transformation` · `Geospatial linkage at census-tract level` · `Small multiples and distributional visualization`
 
 `R` · `Quarto` · `RMarkdown` · `SQL` · `tidyverse` · `nnet` · `gt` / `gtsummary` · `ggeffects` · `patchwork`
 
